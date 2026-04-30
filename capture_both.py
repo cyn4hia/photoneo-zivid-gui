@@ -7,21 +7,18 @@ from __future__ import annotations
 import os
 import sys
 import time
-import threading
 import traceback
 from datetime import datetime
 from pathlib import Path
 
-import numpy as np
 import zivid
 from harvesters.core import Harvester
-import keyboard
 
 
 OUTPUT_DIR = Path.home() / "Desktop" / "captures"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-ZIVID_SETTINGS_YAML: str | None = None  
+ZIVID_SETTINGS_YAML: str | None = None 
 
 PHOXI_CTI = (
     Path(os.environ.get("PHOXI_CONTROL_PATH", r"C:\Program Files\Photoneo\PhoXiControl"))
@@ -29,63 +26,50 @@ PHOXI_CTI = (
 )
 
 
-
 def _save_zivid_ply(frame: zivid.Frame, ply_path: Path) -> None:
-    """Save a Zivid frame as PLY, trying a few API spellings for compatibility."""
+    """Save Zivid frame as PLY, trying multiple API spellings."""
     point_cloud = frame.point_cloud()
-
     for method_name in ("save", "save_ply"):
         if hasattr(point_cloud, method_name):
             getattr(point_cloud, method_name)(str(ply_path))
             return
-
     frame.save(str(ply_path))
 
 
 class ZividCapture:
     def __init__(self, settings_yaml: str | None = None) -> None:
-        print(f"[Zivid] zivid module version: {zivid.__version__}")
-        print("[Zivid] Starting application...")
+        print(f"[Zivid] zivid version: {zivid.__version__}")
         self.app = zivid.Application()
 
         cams = self.app.cameras()
-        print(f"[Zivid] Found {len(cams)} camera(s):")
-        for c in cams:
-            print(f"  - {c.info.model_name} (SN={c.info.serial_number}, "
-                  f"state.connected={c.state.connected})")
-
+        print(f"[Zivid] Found {len(cams)} camera(s)")
         if not cams:
             raise RuntimeError("No Zivid cameras detected.")
 
-        print("[Zivid] Connecting to camera...")
         self.camera = self.app.connect_camera()
 
         if settings_yaml and Path(settings_yaml).exists():
-            print(f"[Zivid] Loading settings from {settings_yaml}")
             self.settings = zivid.Settings.load(settings_yaml)
+            print(f"[Zivid] Loaded settings from {settings_yaml}")
         else:
-            print("[Zivid] Using built-in default settings")
             self.settings = zivid.Settings(
                 acquisitions=[zivid.Settings.Acquisition()],
                 color=zivid.Settings2D(acquisitions=[zivid.Settings2D.Acquisition()]),
             )
+            print("[Zivid] Using default settings")
 
         info = self.camera.info
         print(f"[Zivid] Connected: {info.model_name} (SN={info.serial_number})")
 
     def capture(self, ply_path: Path) -> bool:
         try:
-            print("[Zivid]    capturing...")
             with self.camera.capture_2d_3d(self.settings) as frame:
-                print("[Zivid]    capture done, saving PLY...")
                 _save_zivid_ply(frame, ply_path)
             if ply_path.exists():
-                size = ply_path.stat().st_size
-                print(f"[Zivid]    -> {ply_path.name} ({size:,} bytes)")
+                print(f"[Zivid]    -> {ply_path.name} ({ply_path.stat().st_size:,} bytes)")
                 return True
-            else:
-                print("[Zivid]    !! save returned but file does not exist")
-                return False
+            print("[Zivid]    !! save returned but file does not exist")
+            return False
         except Exception as e:
             print(f"[Zivid]    !! capture failed: {e}")
             traceback.print_exc()
@@ -103,12 +87,9 @@ class PhotoneoTrigger:
     def __init__(self, cti_path: Path) -> None:
         if not cti_path.exists():
             raise FileNotFoundError(f"photoneo.cti not found at: {cti_path}")
-
-        print(f"[Photoneo] Loading GenTL producer: {cti_path}")
         self.h = Harvester()
         self.h.add_file(str(cti_path))
         self.h.update()
-
         if not self.h.device_info_list:
             raise RuntimeError("No Photoneo devices found.")
         for i, dev in enumerate(self.h.device_info_list):
@@ -121,7 +102,6 @@ class PhotoneoTrigger:
             nm.TriggerSource.value = "Software"
         except Exception as e:
             print(f"[Photoneo] Trigger config note: {e}")
-
         self.ia.start()
         print("[Photoneo] Acquisition started")
 
@@ -150,22 +130,6 @@ class PhotoneoTrigger:
             pass
 
 
-quit_event = threading.Event()
-capture_event = threading.Event()
-capture_lock = threading.Lock()
-
-
-def on_space_press(_):
-    capture_event.set()
-
-
-def on_esc_press(event):
-    if hasattr(event, 'name') and event.name == 'esc':
-        print("\n[main] ESC pressed - quitting")
-        quit_event.set()
-    else:
-        print(f"\n[main] esc handler fired but event was: {event}")
-
 
 def main() -> int:
     print(f"Output dir for Zivid: {OUTPUT_DIR}")
@@ -192,47 +156,41 @@ def main() -> int:
         print("\nBoth cameras failed. Exiting.")
         return 1
 
-    keyboard.on_press_key("space", on_space_press, suppress=False)
-    keyboard.on_press_key("esc", on_esc_press, suppress=False)
-
     print()
     print("=" * 60)
-    print("  [SPACE]  capture from both cameras")
-    print("  [ESC]    quit cleanly")
+    print("  [ENTER]      capture from both cameras")
+    print("  [Q] + ENTER  quit cleanly")
     print("=" * 60)
     print()
 
     capture_count = 0
 
     try:
-        while not quit_event.is_set():
-            triggered = capture_event.wait(timeout=0.1)
-            if quit_event.is_set():
-                print("[main] quit_event was set, exiting loop")
+        while True:
+            user_input = input(f"Capture #{capture_count + 1}? (Enter=go, q=quit) > ").strip().lower()
+
+            if user_input in ("q", "quit", "exit"):
+                print("Quit requested.")
                 break
 
-            with capture_lock:
-                if quit_event.is_set():
-                    break
-                capture_count += 1
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                stem = f"capture_{capture_count:04d}_{ts}"
-                print(f"\n--- Capture #{capture_count} ({ts}) ---")
-                t0 = time.monotonic()
+            capture_count += 1
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            stem = f"capture_{capture_count:04d}_{ts}"
+            print(f"\n--- Capture #{capture_count} ({ts}) ---")
+            t0 = time.monotonic()
 
-                if zv is not None:
-                    zv.capture(OUTPUT_DIR / f"{stem}_zivid.ply")
-                if pn is not None:
-                    pn.trigger()
+            if zv is not None:
+                zv.capture(OUTPUT_DIR / f"{stem}_zivid.ply")
+            if pn is not None:
+                pn.trigger()
 
-                dt = time.monotonic() - t0
-                print(f"--- done in {dt:.1f}s, ready for next capture ---")
+            dt = time.monotonic() - t0
+            print(f"--- done in {dt:.1f}s ---\n")
 
-    except KeyboardInterrupt:
-        print("\n[main] Interrupted (Ctrl+C)")
+    except (KeyboardInterrupt, EOFError):
+        print("\nInterrupted.")
 
     finally:
-        keyboard.unhook_all()
         print("\nShutting down...")
         if zv is not None:
             zv.close()
