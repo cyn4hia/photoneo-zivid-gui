@@ -10,6 +10,7 @@ import time
 import traceback
 from datetime import datetime
 from pathlib import Path
+import msvcrt
 
 import zivid
 from harvesters.core import Harvester
@@ -177,27 +178,20 @@ def main() -> int:
     capture_count = 0
     print("[debug] entering main loop")
 
+
     while True:
-        print(f"[debug] top of loop, count={capture_count}")
-        try:
-            raw = input(f"Capture #{capture_count + 1}? (Enter=go, q=quit) > ")
-            print(f"[debug] input() returned: {repr(raw)}")
-        except EOFError:
-            print("[debug] EOFError caught - stdin closed")
-            break
-        except KeyboardInterrupt:
-            print("[debug] KeyboardInterrupt caught")
-            break
-        except Exception as e:
-            print(f"[debug] unexpected exception in input(): {type(e).__name__}: {e}")
-            traceback.print_exc()
+        print(f"\nCapture #{capture_count + 1}? (Press SPACE/ENTER to capture, Q to quit) ", flush=True)
+
+        ch = msvcrt.getwch()
+        print(f"[debug] got key: {repr(ch)}")
+
+        if ch.lower() == "q" or ch == "\x1b": 
+            print("Quit requested.")
             break
 
-        user_input = raw.strip().lower()
-
-        if user_input in ("q", "quit", "exit"):
-            print("[debug] quit keyword matched")
-            break
+        if ch not in (" ", "\r", "\n"):
+            print(f"  (ignoring '{ch}', press SPACE/ENTER to capture or Q to quit)")
+            continue
 
         capture_count += 1
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -215,7 +209,7 @@ def main() -> int:
             traceback.print_exc()
 
         dt = time.monotonic() - t0
-        print(f"--- done in {dt:.1f}s ---\n")
+        print(f"--- done in {dt:.1f}s ---")
 
     print("[debug] exited main loop")
     print("\nShutting down...")
