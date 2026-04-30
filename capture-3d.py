@@ -19,7 +19,7 @@ from harvesters.core import Harvester
 
 import keyboard  # global hotkey listener
 
-# configs
+# configs 
 OUTPUT_DIR = Path("captures")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
