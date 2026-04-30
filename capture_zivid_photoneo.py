@@ -153,11 +153,21 @@ def main() -> int:
     stop_reader = threading.Event()
 
     reader_code = (
-        "import msvcrt, sys\n"
+        "import msvcrt, sys, traceback\n"
+        "sys.stdout.write('READER: alive, press keys here\\n')\n"
+        "sys.stdout.flush()\n"
         "while True:\n"
-        "    ch = msvcrt.getwch()\n"
+        "    try:\n"
+        "        ch = msvcrt.getwch()\n"
+        "    except Exception as e:\n"
+        "        sys.stdout.write('READER: getwch failed: ' + str(e) + '\\n')\n"
+        "        sys.stdout.flush()\n"
+        "        continue\n"
         "    sys.stdout.write(repr(ch) + '\\n')\n"
         "    sys.stdout.flush()\n"
+        "    if ch.lower() == 'q':\n"
+        "        sys.stdout.write('READER: q pressed, but staying alive\\n')\n"
+        "        sys.stdout.flush()\n"
     )
     reader_proc = subprocess.Popen(
         [sys.executable, "-c", reader_code],
@@ -175,15 +185,20 @@ def main() -> int:
         while not stop_reader.is_set():
             line = reader_proc.stdout.readline()
             if not line:
+                print("[trace] !! reader subprocess stdout closed (child died?)", flush=True)
                 time.sleep(0.1)
                 continue
+            line = line.strip()
+            if line.startswith("READER:"):
+                print(f"[trace] {line}", flush=True)
+                continue
             try:
-                ch = eval(line.strip())
-            except Exception:
+                ch = eval(line)
+            except Exception as e:
+                print(f"[trace] couldn't parse reader output {line!r}: {e}", flush=True)
                 continue
             print(f"[trace] reader got: {repr(ch)}", flush=True)
             key_queue.put(ch)
-        print("[trace] queue-feeder thread exiting", flush=True)
 
     threading.Thread(target=key_reader, daemon=True).start()
 
