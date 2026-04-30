@@ -165,9 +165,23 @@ def main() -> int:
 
     capture_count = 0
 
+    def flush_stdin():
+        """Discard any pending input that's buffered in stdin."""
+        try:
+            import msvcrt 
+            while msvcrt.kbhit():
+                msvcrt.getwch()
+        except Exception:
+            pass
+
     try:
         while True:
+            flush_stdin()
+            time.sleep(0.1)
+            flush_stdin()
+
             user_input = input(f"Capture #{capture_count + 1}? (Enter=go, q=quit) > ").strip().lower()
+            print(f"[debug] received: {repr(user_input)}")
 
             if user_input in ("q", "quit", "exit"):
                 print("Quit requested.")
