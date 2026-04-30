@@ -49,6 +49,10 @@ def capture_zivid(stem: str) -> None:
             acquisitions=[zivid.Settings.Acquisition()],
             color=zivid.Settings2D(acquisitions=[zivid.Settings2D.Acquisition()]),
         )
+
+    settings.sampling.pixel = zivid.Settings.Sampling.Pixel.all
+    settings.sampling.color = zivid.Settings.Sampling.Color.rgb
+
     ply_path = OUTPUT_DIR / f"{stem}_zivid.ply"
     with camera.capture_2d_3d(settings) as frame:
         _save_zivid_ply(frame, ply_path)
