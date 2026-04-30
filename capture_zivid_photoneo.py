@@ -152,13 +152,13 @@ def main() -> int:
         print("[trace] reader thread alive", flush=True)
         while not stop_reader.is_set():
             try:
-                if msvcrt.kbhit():
-                    ch = msvcrt.getwch()
+                ch = sys.stdin.read(1)
+                if ch:
                     print(f"[trace] reader got: {repr(ch)}", flush=True)
                     key_queue.put(ch)
             except Exception as e:
                 print(f"[trace] reader exception: {e}", flush=True)
-            time.sleep(0.05)
+                time.sleep(0.1)
         print("[trace] reader thread exiting", flush=True)
 
     threading.Thread(target=key_reader, daemon=True).start()
