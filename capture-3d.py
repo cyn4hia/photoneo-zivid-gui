@@ -161,10 +161,7 @@ def main() -> int:
     zv: ZividCapture | None = None
     pn: PhotoneoCapture | None = None
 
-    try:
-        zv = ZividCapture(ZIVID_SETTINGS)
-    except Exception as exc:
-        print(f"[Zivid] FAILED to initialize: {exc}")
+    zv = None
 
     try:
         pn = PhotoneoCapture(PHOXI_CTI)
