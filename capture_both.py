@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+import threading
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -20,24 +21,42 @@ import keyboard
 OUTPUT_DIR = Path.home() / "Desktop" / "captures"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-
-ZIVID_SETTINGS_YAML: str | None = None
+ZIVID_SETTINGS_YAML: str | None = None  
 
 PHOXI_CTI = (
     Path(os.environ.get("PHOXI_CONTROL_PATH", r"C:\Program Files\Photoneo\PhoXiControl"))
     / "API" / "bin" / "photoneo.cti"
 )
 
-CAPTURE_KEY = "space"
-QUIT_KEYS = ("q", "esc")
-DEBOUNCE_SEC = 0.5
 
+
+def _save_zivid_ply(frame: zivid.Frame, ply_path: Path) -> None:
+    """Save a Zivid frame as PLY, trying a few API spellings for compatibility."""
+    point_cloud = frame.point_cloud()
+
+    for method_name in ("save", "save_ply"):
+        if hasattr(point_cloud, method_name):
+            getattr(point_cloud, method_name)(str(ply_path))
+            return
+
+    frame.save(str(ply_path))
 
 
 class ZividCapture:
     def __init__(self, settings_yaml: str | None = None) -> None:
+        print(f"[Zivid] zivid module version: {zivid.__version__}")
         print("[Zivid] Starting application...")
         self.app = zivid.Application()
+
+        cams = self.app.cameras()
+        print(f"[Zivid] Found {len(cams)} camera(s):")
+        for c in cams:
+            print(f"  - {c.info.model_name} (SN={c.info.serial_number}, "
+                  f"state.connected={c.state.connected})")
+
+        if not cams:
+            raise RuntimeError("No Zivid cameras detected.")
+
         print("[Zivid] Connecting to camera...")
         self.camera = self.app.connect_camera()
 
@@ -52,17 +71,24 @@ class ZividCapture:
             )
 
         info = self.camera.info
-        print(f"[Zivid] Connected: {info.model_name}  SN={info.serial_number}")
+        print(f"[Zivid] Connected: {info.model_name} (SN={info.serial_number})")
 
     def capture(self, ply_path: Path) -> bool:
         try:
+            print("[Zivid]    capturing...")
             with self.camera.capture_2d_3d(self.settings) as frame:
-                frame.point_cloud().save(str(ply_path))
-            size = ply_path.stat().st_size if ply_path.exists() else 0
-            print(f"[Zivid]    -> {ply_path.name} ({size:,} bytes)")
-            return True
+                print("[Zivid]    capture done, saving PLY...")
+                _save_zivid_ply(frame, ply_path)
+            if ply_path.exists():
+                size = ply_path.stat().st_size
+                print(f"[Zivid]    -> {ply_path.name} ({size:,} bytes)")
+                return True
+            else:
+                print("[Zivid]    !! save returned but file does not exist")
+                return False
         except Exception as e:
             print(f"[Zivid]    !! capture failed: {e}")
+            traceback.print_exc()
             return False
 
     def close(self) -> None:
@@ -73,14 +99,10 @@ class ZividCapture:
             pass
 
 
-
 class PhotoneoTrigger:
     def __init__(self, cti_path: Path) -> None:
         if not cti_path.exists():
-            raise FileNotFoundError(
-                f"photoneo.cti not found at: {cti_path}\n"
-                "Set PHOXI_CONTROL_PATH env var to your install dir."
-            )
+            raise FileNotFoundError(f"photoneo.cti not found at: {cti_path}")
 
         print(f"[Photoneo] Loading GenTL producer: {cti_path}")
         self.h = Harvester()
@@ -88,17 +110,12 @@ class PhotoneoTrigger:
         self.h.update()
 
         if not self.h.device_info_list:
-            raise RuntimeError(
-                "No Photoneo devices found. Open PhoXi Control and connect "
-                "the scanner first."
-            )
-
+            raise RuntimeError("No Photoneo devices found.")
         for i, dev in enumerate(self.h.device_info_list):
             print(f"[Photoneo]   [{i}] {dev}")
 
         self.ia = self.h.create(0)
         nm = self.ia.remote_device.node_map
-
         try:
             nm.TriggerMode.value = "On"
             nm.TriggerSource.value = "Software"
@@ -106,17 +123,16 @@ class PhotoneoTrigger:
             print(f"[Photoneo] Trigger config note: {e}")
 
         self.ia.start()
-        print("[Photoneo] Acquisition started (PhoXi Control will auto-save frames)")
+        print("[Photoneo] Acquisition started")
 
     def trigger(self) -> bool:
-        """Fire a software trigger. Don't fetch buffer - PhoXi Control saves the frame."""
         nm = self.ia.remote_device.node_map
         try:
             try:
                 nm.TriggerSoftware.execute()
             except Exception:
                 nm.TriggerFrame.execute()
-            print("[Photoneo] -> trigger fired (check PhoXi Control's recording folder)")
+            print("[Photoneo] -> trigger fired (PhoXi Control will save the frame)")
             return True
         except Exception as e:
             print(f"[Photoneo] !! trigger failed: {e}")
@@ -130,15 +146,27 @@ class PhotoneoTrigger:
             pass
         try:
             self.h.reset()
-            print("[Photoneo] Stopped")
         except Exception:
             pass
 
 
+quit_event = threading.Event()
+capture_event = threading.Event()
+capture_lock = threading.Lock()
+
+
+def on_space_press(_):
+    capture_event.set()
+
+
+def on_esc_press(_):
+    print("\n[main] ESC pressed - quitting")
+    quit_event.set()
+
 
 def main() -> int:
-    print(f"Output dir for Zivid PLYs: {OUTPUT_DIR}")
-    print()
+    print(f"Output dir for Zivid: {OUTPUT_DIR}")
+    print("Photoneo: see PhoXi Control's recording folder\n")
 
     zv: ZividCapture | None = None
     pn: PhotoneoTrigger | None = None
@@ -161,59 +189,55 @@ def main() -> int:
         print("\nBoth cameras failed. Exiting.")
         return 1
 
+    keyboard.on_press_key("space", on_space_press, suppress=False)
+    keyboard.on_press_key("esc", on_esc_press, suppress=False)
+
     print()
     print("=" * 60)
-    print(f"  [{CAPTURE_KEY.upper()}]  capture from both cameras")
-    print(f"  [Q] / [ESC]  quit")
+    print("  [SPACE]  capture from both cameras")
+    print("  [ESC]    quit cleanly")
     print("=" * 60)
     print()
 
     capture_count = 0
-    last_trigger = 0.0
 
     try:
-        while True:
-            if any(keyboard.is_pressed(k) for k in QUIT_KEYS):
-                print("\nQuit requested.")
-                break
+        while not quit_event.is_set():
+            triggered = capture_event.wait(timeout=0.1)
+            if not triggered:
+                continue
+            capture_event.clear()
 
-            if keyboard.is_pressed(CAPTURE_KEY):
-                if time.monotonic() - last_trigger < DEBOUNCE_SEC:
-                    time.sleep(0.05)
-                    continue
-                last_trigger = time.monotonic()
+            with capture_lock:
+                if quit_event.is_set():
+                    break
                 capture_count += 1
-
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 stem = f"capture_{capture_count:04d}_{ts}"
                 print(f"\n--- Capture #{capture_count} ({ts}) ---")
-
                 t0 = time.monotonic()
+
                 if zv is not None:
                     zv.capture(OUTPUT_DIR / f"{stem}_zivid.ply")
                 if pn is not None:
                     pn.trigger()
+
                 dt = time.monotonic() - t0
-                print(f"--- done in {dt:.1f}s ---")
-
-                while keyboard.is_pressed(CAPTURE_KEY):
-                    time.sleep(0.02)
-
-            time.sleep(0.02)
+                print(f"--- done in {dt:.1f}s, ready for next capture ---")
 
     except KeyboardInterrupt:
-        print("\nInterrupted.")
+        print("\n[main] Interrupted (Ctrl+C)")
 
     finally:
-        print("\nShutting down cameras...")
+        keyboard.unhook_all()
+        print("\nShutting down...")
         if zv is not None:
             zv.close()
         if pn is not None:
             pn.close()
 
     print(f"\nTotal captures: {capture_count}")
-    print(f"Zivid PLYs:    {OUTPUT_DIR}")
-    print(f"Photoneo PLYs: see PhoXi Control's recording folder")
+    print(f"Zivid PLYs: {OUTPUT_DIR}")
     return 0
 
 
