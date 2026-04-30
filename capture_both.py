@@ -159,9 +159,12 @@ def on_space_press(_):
     capture_event.set()
 
 
-def on_esc_press(_):
-    print("\n[main] ESC pressed - quitting")
-    quit_event.set()
+def on_esc_press(event):
+    if hasattr(event, 'name') and event.name == 'esc':
+        print("\n[main] ESC pressed - quitting")
+        quit_event.set()
+    else:
+        print(f"\n[main] esc handler fired but event was: {event}")
 
 
 def main() -> int:
@@ -204,9 +207,9 @@ def main() -> int:
     try:
         while not quit_event.is_set():
             triggered = capture_event.wait(timeout=0.1)
-            if not triggered:
-                continue
-            capture_event.clear()
+            if quit_event.is_set():
+                print("[main] quit_event was set, exiting loop")
+                break
 
             with capture_lock:
                 if quit_event.is_set():
