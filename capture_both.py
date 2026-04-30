@@ -174,42 +174,55 @@ def main() -> int:
         except Exception:
             pass
 
-    try:
-        while True:
-            flush_stdin()
-            time.sleep(0.1)
-            flush_stdin()
+    capture_count = 0
+    print("[debug] entering main loop")
 
-            user_input = input(f"Capture #{capture_count + 1}? (Enter=go, q=quit) > ").strip().lower()
-            print(f"[debug] received: {repr(user_input)}")
+    while True:
+        print(f"[debug] top of loop, count={capture_count}")
+        try:
+            raw = input(f"Capture #{capture_count + 1}? (Enter=go, q=quit) > ")
+            print(f"[debug] input() returned: {repr(raw)}")
+        except EOFError:
+            print("[debug] EOFError caught - stdin closed")
+            break
+        except KeyboardInterrupt:
+            print("[debug] KeyboardInterrupt caught")
+            break
+        except Exception as e:
+            print(f"[debug] unexpected exception in input(): {type(e).__name__}: {e}")
+            traceback.print_exc()
+            break
 
-            if user_input in ("q", "quit", "exit"):
-                print("Quit requested.")
-                break
+        user_input = raw.strip().lower()
 
-            capture_count += 1
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            stem = f"capture_{capture_count:04d}_{ts}"
-            print(f"\n--- Capture #{capture_count} ({ts}) ---")
-            t0 = time.monotonic()
+        if user_input in ("q", "quit", "exit"):
+            print("[debug] quit keyword matched")
+            break
 
+        capture_count += 1
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        stem = f"capture_{capture_count:04d}_{ts}"
+        print(f"\n--- Capture #{capture_count} ({ts}) ---")
+        t0 = time.monotonic()
+
+        try:
             if zv is not None:
                 zv.capture(OUTPUT_DIR / f"{stem}_zivid.ply")
             if pn is not None:
                 pn.trigger()
+        except Exception as e:
+            print(f"[debug] exception during capture: {type(e).__name__}: {e}")
+            traceback.print_exc()
 
-            dt = time.monotonic() - t0
-            print(f"--- done in {dt:.1f}s ---\n")
+        dt = time.monotonic() - t0
+        print(f"--- done in {dt:.1f}s ---\n")
 
-    except (KeyboardInterrupt, EOFError):
-        print("\nInterrupted.")
-
-    finally:
-        print("\nShutting down...")
-        if zv is not None:
-            zv.close()
-        if pn is not None:
-            pn.close()
+    print("[debug] exited main loop")
+    print("\nShutting down...")
+    if zv is not None:
+        zv.close()
+    if pn is not None:
+        pn.close()
 
     print(f"\nTotal captures: {capture_count}")
     print(f"Zivid PLYs: {OUTPUT_DIR}")
