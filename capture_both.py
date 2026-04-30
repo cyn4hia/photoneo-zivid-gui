@@ -45,10 +45,11 @@ class ZividCapture:
             print(f"[Zivid] Loading settings from {settings_yaml}")
             self.settings = zivid.Settings.load(settings_yaml)
         else:
-            print("[Zivid] Using Consumer preset (no YAML provided)")
-            self.settings = zivid.presets.read_camera_presets(
-                self.camera, "Consumer"
-            )[0].settings
+            print("[Zivid] Using built-in default settings")
+            self.settings = zivid.Settings(
+                acquisitions=[zivid.Settings.Acquisition()],
+                color=zivid.Settings2D(acquisitions=[zivid.Settings2D.Acquisition()]),
+            )
 
         info = self.camera.info
         print(f"[Zivid] Connected: {info.model_name}  SN={info.serial_number}")
