@@ -11,6 +11,9 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 import msvcrt
+import msvcrt
+import queue
+import threading
 
 import zivid
 from harvesters.core import Harvester
@@ -178,19 +181,35 @@ def main() -> int:
     capture_count = 0
     print("[debug] entering main loop")
 
+    key_queue = queue.Queue()
+    stop_reader = threading.Event()
+
+    def key_reader():
+        while not stop_reader.is_set():
+            if msvcrt.kbhit():
+                try:
+                    ch = msvcrt.getwch()
+                    key_queue.put(ch)
+                except Exception:
+                    pass
+            time.sleep(0.05)
+
+    reader_thread = threading.Thread(target=key_reader, daemon=True)
+    reader_thread.start()
+
+    print("\nReady. Press SPACE or ENTER to capture, Q to quit.\n")
 
     while True:
-        print(f"\nCapture #{capture_count + 1}? (Press SPACE/ENTER to capture, Q to quit) ", flush=True)
-
-        ch = msvcrt.getwch()
+        ch = key_queue.get()
         print(f"[debug] got key: {repr(ch)}")
 
-        if ch.lower() == "q" or ch == "\x1b": 
+        if ch.lower() == "q" or ch == "\x1b":
             print("Quit requested.")
+            stop_reader.set()
             break
 
         if ch not in (" ", "\r", "\n"):
-            print(f"  (ignoring '{ch}', press SPACE/ENTER to capture or Q to quit)")
+            print(f"  (ignoring {repr(ch)}, use SPACE/ENTER/Q)")
             continue
 
         capture_count += 1
@@ -210,17 +229,7 @@ def main() -> int:
 
         dt = time.monotonic() - t0
         print(f"--- done in {dt:.1f}s ---")
-
-    print("[debug] exited main loop")
-    print("\nShutting down...")
-    if zv is not None:
-        zv.close()
-    if pn is not None:
-        pn.close()
-
-    print(f"\nTotal captures: {capture_count}")
-    print(f"Zivid PLYs: {OUTPUT_DIR}")
-    return 0
+        print(f"\nReady for next. Press SPACE/ENTER to capture, Q to quit.")
 
 
 if __name__ == "__main__":
