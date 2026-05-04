@@ -43,7 +43,12 @@ def capture_zivid(out_dir: Path, settings_yaml: str | None) -> dict:
         if settings_yaml and Path(settings_yaml).exists():
             settings = zivid.Settings.load(settings_yaml)
         else:
-            settings = zivid.Settings.load(settings_yaml)
+            settings = zivid.Settings(
+                acquisitions=[zivid.Settings.Acquisition()],
+                color=zivid.Settings2D(
+                    acquisitions=[zivid.Settings2D.Acquisition()],
+                ),
+            )
             try:
                 settings.sampling.pixel = zivid.Settings.Sampling.Pixel.all
             except Exception:
