@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import time
+import shutil
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -194,18 +195,33 @@ def capture_photoneo(phoxi_dir: Path, out_dir: Path) -> dict:
         except Exception as e:
             move_errors.append(f"could not create out_dir: {e}")
 
-        import shutil
         for ext, src in new_files.items():
-            try:
-                src_path = Path(src)
-                dest = out_dir / f"photoneo.{ext}"
-                if dest.exists():
+            src_path = Path(src)
+            dest = out_dir / f"photoneo.{ext}"
+
+            if dest.exists():
+                try:
                     dest.unlink()
-                shutil.move(str(src_path), str(dest))
-                moved_files[ext] = str(dest)
-            except Exception as e:
-                move_errors.append(f"{ext}: {e}")
-                moved_files[ext] = src
+                except Exception:
+                    pass
+
+            # Retry the move - PhoXi may still have the file briefly locked
+            last_error = None
+            for attempt in range(10):  # up to 5 seconds total
+                try:
+                    # Wait a bit so PhoXi finishes writing
+                    time.sleep(0.5)
+                    shutil.move(str(src_path), str(dest))
+                    moved_files[ext] = str(dest)
+                    last_error = None
+                    break
+                except Exception as e:
+                    last_error = e
+
+            if last_error is not None:
+                move_errors.append(f"{ext}: {last_error}")
+                # Fall back: keep the original path so we don't lose the reference
+                moved_files[ext] = str(src_path)
 
     primary = moved_files.get("ply", "") or moved_files.get("praw", "")
 
