@@ -172,69 +172,82 @@ def capture_photoneo(phoxi_dir: Path, out_dir: Path) -> dict:
             except Exception:
                 pass
 
-    new_files: dict = {}   # extension -> path in PhoXi's flat folder
-    for _ in range(60):
-        time.sleep(0.1)
-        if rec_dir.exists():
-            current = set()
-            for ext in ("*.ply", "*.praw"):
-                current |= {p.name for p in rec_dir.glob(ext)}
-            new_names = current - before_files
-            if new_names:
-                for name in new_names:
-                    ext = Path(name).suffix.lower().lstrip(".")
-                    new_files[ext] = str(rec_dir / name)
-                if new_files:
-                    break
+    # Wait for PhoXi to write *something* new, with retries.
+    new_paths: list[Path] = []
+    deadline = time.time() + 12.0    # 12 second budget total
+    while time.time() < deadline:
+        time.sleep(0.3)
+        if not rec_dir.exists():
+            continue
+        current_paths = []
+        for ext in ("*.ply", "*.praw"):
+            current_paths.extend(rec_dir.glob(ext))
+        # New = filenames that weren't there before the trigger
+        new_paths = [p for p in current_paths if p.name not in before_files]
+        if new_paths:
+            break
 
     moved_files: dict = {}
     move_errors: list = []
-    if new_files:
-        try:
-            out_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            move_errors.append(f"could not create out_dir: {e}")
 
-        for ext, src in new_files.items():
-            src_path = Path(src)
-            dest = out_dir / f"photoneo.{ext}"
+    if not new_paths:
+        # Nothing new appeared; PhoXi didn't write
+        return {
+            "status": "complete",
+            "file": "",
+            "praw_file": "",
+            "ply_file": "",
+            "phoxi_recording_dir": str(rec_dir),
+            "note": ("trigger fired but no new file appeared in "
+                     f"{rec_dir}. Verify PhoXi Control Recording is ON "
+                     "with PLY/PRAW format selected."),
+        }
 
-            if dest.exists():
-                try:
-                    dest.unlink()
-                except Exception:
-                    pass
+    # Move every new file into out_dir
+    import shutil
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        move_errors.append(f"could not create out_dir {out_dir}: {e}")
 
-            # Retry the move - PhoXi may still have the file briefly locked
-            last_error = None
-            for attempt in range(10):  # up to 5 seconds total
-                try:
-                    # Wait a bit so PhoXi finishes writing
-                    time.sleep(0.5)
-                    shutil.move(str(src_path), str(dest))
-                    moved_files[ext] = str(dest)
-                    last_error = None
-                    break
-                except Exception as e:
-                    last_error = e
+    for src_path in new_paths:
+        ext = src_path.suffix.lower().lstrip(".")
+        dest = out_dir / f"photoneo.{ext}"
 
-            if last_error is not None:
-                move_errors.append(f"{ext}: {last_error}")
-                # Fall back: keep the original path so we don't lose the reference
-                moved_files[ext] = str(src_path)
+        # If a stale file exists at the destination, remove it first
+        if dest.exists():
+            try:
+                dest.unlink()
+            except Exception as e:
+                move_errors.append(f"could not remove stale {dest}: {e}")
+
+        # Wait briefly + retry: PhoXi may still be writing
+        moved = False
+        last_error: Exception | None = None
+        for attempt in range(15):
+            try:
+                time.sleep(0.4)
+                shutil.move(str(src_path), str(dest))
+                moved_files[ext] = str(dest)
+                moved = True
+                break
+            except Exception as e:
+                last_error = e
+
+        if not moved:
+            move_errors.append(
+                f"failed to move {src_path.name} -> {dest}: {last_error}"
+            )
+            # Last resort: fall back to original path so the file isn't lost
+            moved_files[ext] = str(src_path)
 
     primary = moved_files.get("ply", "") or moved_files.get("praw", "")
 
-    note_parts = []
-    if not new_files:
-        note_parts.append(
-            "trigger fired but no new file; ensure PhoXi Control "
-            "Recording is ON with PLY/PRAW format"
-        )
-    else:
-        note_parts.append(f"detected {len(new_files)} new file(s)")
+    note_parts = [f"detected {len(new_paths)} new file(s) in {rec_dir}"]
     if move_errors:
-        note_parts.append("move errors: " + "; ".join(move_errors))
+        note_parts.append("ERRORS: " + "; ".join(move_errors))
+    else:
+        note_parts.append(f"moved into {out_dir}")
 
     return {
         "status": "complete",
@@ -242,6 +255,7 @@ def capture_photoneo(phoxi_dir: Path, out_dir: Path) -> dict:
         "praw_file": moved_files.get("praw", ""),
         "ply_file": moved_files.get("ply", ""),
         "phoxi_recording_dir": str(rec_dir),
+        "out_dir": str(out_dir),
         "note": " · ".join(note_parts),
     }
 
