@@ -20,7 +20,7 @@ from pathlib import Path
 def _phoxi_recording_dir(phoxi_dir: Path) -> Path:
     # EDIT this if PhoXi Control's recording folder is elsewhere.
     # Open PhoXi Control -> File -> Recording Options to confirm.
-    return phoxi_dir / "Recordings"
+    return Path(r"D:\Images\data-collection\captures")
 
 
 def _now_iso() -> str:
