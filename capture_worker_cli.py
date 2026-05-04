@@ -34,67 +34,69 @@ def capture_zivid(out_dir: Path, settings_yaml: str | None) -> dict:
         return {"status": "failed", "error": f"zivid import failed: {e}"}
 
     try:
+        from zivid_io import save_zivid_outputs_scaled
+    except Exception as e:
+        return {"status": "failed",
+                "error": f"zivid_io import failed: {e}. "
+                         "Make sure zivid_io.py is in the same folder."}
+
+    try:
         app = zivid.Application()
         cams = app.cameras()
         if not cams:
             return {"status": "failed", "error": "no Zivid cameras detected"}
         camera = app.connect_camera()
 
-        # Match the working pattern: bare Settings() works for capture_2d_3d
-        # in this Zivid version. Override with a YAML file if provided.
+        # Bare Settings() works for capture_2d_3d in this Zivid version.
+        # Override with a YAML file if provided.
         if settings_yaml and Path(settings_yaml).exists():
             settings = zivid.Settings.load(settings_yaml)
         else:
             settings = zivid.Settings()
 
         out_dir.mkdir(parents=True, exist_ok=True)
-        ply_path = out_dir / "zivid.ply"
-        zdf_path = out_dir / "zivid.zdf"
+        prefix = out_dir / "zivid"
 
-        # capture_2d_3d returns a Frame (not a context manager in some versions)
         frame = camera.capture_2d_3d(settings)
 
-        # ZDF first - preserves the full raw frame (calibration, intensity, etc.)
-        try:
-            frame.save(str(zdf_path))
-        except Exception as e:
-            print(f"[zivid] zdf save failed: {e}", flush=True)
-
-        # Then PLY for downstream tools that don't read ZDF
-        point_cloud = frame.point_cloud()
-        saved = False
-        for method_name in ("save", "save_ply"):
-            if hasattr(point_cloud, method_name):
-                try:
-                    getattr(point_cloud, method_name)(str(ply_path))
-                    saved = True
-                    break
-                except Exception:
-                    continue
-        if not saved:
-            try:
-                frame.save(str(ply_path))
-                saved = True
-            except Exception as e:
-                print(f"[zivid] ply save failed: {e}", flush=True)
-
-        ply_size = ply_path.stat().st_size if ply_path.exists() else 0
-        zdf_size = zdf_path.stat().st_size if zdf_path.exists() else 0
+        written, depth_meta = save_zivid_outputs_scaled(
+            frame,
+            prefix=prefix,
+            save_zdf=True,
+            save_rgba_png=True,
+            depth_mode="u16_scaled",   # change to "float_npy" if you want raw float
+            save_snr_png=True,
+            save_normal_png=True,
+            save_ply=True,
+        )
 
         try:
             camera.disconnect()
         except Exception:
             pass
 
+        # Convert Path objects to str so we can JSON-serialize them
+        files_dict = {k: str(v) for k, v in written.items()}
+
+        # Sizes for the report
+        sizes = {}
+        for k, v in written.items():
+            try:
+                sizes[k] = Path(v).stat().st_size
+            except Exception:
+                sizes[k] = 0
+
+        # Primary output for the GUI's main file slot is the PLY
+        primary = files_dict.get("pc", "")
+
         return {
             "status": "complete",
-            "file": str(ply_path),
-            "zdf_file": str(zdf_path) if zdf_size > 0 else "",
-            "size_bytes": ply_size,
-            "zdf_size_bytes": zdf_size,
+            "file": primary,
+            "outputs": files_dict,
+            "sizes": sizes,
+            "depth_meta": depth_meta,
             "settings": {"yaml": settings_yaml or "default"},
         }
-
     except Exception as e:
         return {
             "status": "failed",
