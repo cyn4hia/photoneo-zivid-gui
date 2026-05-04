@@ -2,6 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal, Tuple, Dict, Any
 import numpy as np
+import open3d as o3d
 
 try:
     from PIL import Image
@@ -100,6 +101,8 @@ def save_zivid_outputs_scaled(
 
     # Depth
     if depth_mode != "off":
+        if pc is None:
+            raise RuntimeError("PLY requested but point cloud not available")
         z_m = pc.copy_data("z")
         if z_m is None or z_m.ndim != 2:
             raise RuntimeError(f"Unexpected depth shape: {None if z_m is None else z_m.shape}")
@@ -140,6 +143,8 @@ def save_zivid_outputs_scaled(
 
     # SNR
     if save_snr_png:
+        if pc is None:
+            raise RuntimeError("PLY requested but point cloud not available")
         snr = pc.copy_data("snr")
         if snr is None:
             raise RuntimeError("SNR plane not available")
@@ -153,6 +158,8 @@ def save_zivid_outputs_scaled(
 
     # Normals
     if save_normal_png:
+        if pc is None:
+            raise RuntimeError("PLY requested but point cloud not available")
         n = pc.copy_data("normals")
         if n is None or n.ndim != 3 or n.shape[2] < 3:
             raise RuntimeError(f"Normals not available or wrong shape: {None if n is None else n.shape}")
@@ -174,15 +181,23 @@ def save_zivid_outputs_scaled(
         written["normal"] = p
 
     # PLY
+    # PLY
+    # PLY
     if save_ply:
+        if pc is None:
+            raise RuntimeError("PLY requested but point cloud not available")
         p = prefix.with_name(prefix.name + "_pc.ply")
         saved = False
+        ply_errors: list[str] = []
+
+        # Try open3d first (preferred - smaller, compressed)
         try:
-            import open3d as o3d
             xyz = pc.copy_data("xyz")
             rgba = pc.copy_data("rgba")
             if xyz is None or xyz.ndim != 3 or xyz.shape[2] < 3:
-                raise RuntimeError(f"Unexpected xyz shape: {None if xyz is None else xyz.shape}")
+                raise RuntimeError(
+                    f"Unexpected xyz shape: {None if xyz is None else xyz.shape}"
+                )
             mask = np.isfinite(xyz).all(axis=2)
             pts = xyz[mask].reshape(-1, 3)
             cols = None
@@ -192,21 +207,35 @@ def save_zivid_outputs_scaled(
             cloud.points = o3d.utility.Vector3dVector(pts)
             if cols is not None and len(cols) == len(pts):
                 cloud.colors = o3d.utility.Vector3dVector(cols)
-            o3d.io.write_point_cloud(str(p), cloud, write_ascii=False, compressed=True)
+            o3d.io.write_point_cloud(
+                str(p), cloud, write_ascii=False, compressed=True
+            )
             written["pc"] = p
             saved = True
-        except Exception:
-            pass
+        except Exception as e:
+            ply_errors.append(f"open3d path: {type(e).__name__}: {e}")
+
+        # Fallback: try Zivid's native PLY save methods
         if not saved:
             try:
-                # Some SDKs allow saving PLY directly from frame/pc
-                try:
-                    frame.save(str(p))
-                except Exception:
-                    pc.save(str(p))
+                pc.save(str(p))
                 written["pc"] = p
                 saved = True
             except Exception as e:
-                raise RuntimeError(f"Zivid: failed saving PLY: {e}")
+                ply_errors.append(f"pc.save: {type(e).__name__}: {e}")
+
+        if not saved:
+            try:
+                frame.save(str(p))
+                written["pc"] = p
+                saved = True
+            except Exception as e:
+                ply_errors.append(f"frame.save: {type(e).__name__}: {e}")
+
+        if not saved:
+            raise RuntimeError(
+                "Zivid: failed saving PLY. Errors tried:\n  - "
+                + "\n  - ".join(ply_errors)
+            )
 
     return written, depth_meta

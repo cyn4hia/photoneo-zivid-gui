@@ -27,3 +27,5 @@ pip install zivid==2.16.0
 
 uv pip uninstall zivid
 uv pip install zivid==2.16.0
+
+uv pip install open3d

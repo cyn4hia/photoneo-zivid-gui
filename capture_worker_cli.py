@@ -129,6 +129,7 @@ def capture_photoneo(phoxi_dir: Path) -> dict:
     before_files: set[str] = set()
     if rec_dir.exists():
         before_files = {p.name for p in rec_dir.glob("*.ply")}
+        before_files |= {p.name for p in rec_dir.glob("*.praw")}
 
     h = None
     ia = None
@@ -170,24 +171,32 @@ def capture_photoneo(phoxi_dir: Path) -> dict:
             except Exception:
                 pass
 
-    new_file = None
+    new_files = {}
     for _ in range(60):
         time.sleep(0.1)
         if rec_dir.exists():
-            current = {p.name for p in rec_dir.glob("*.ply")}
+            current = set()
+            for ext in ("*.ply", "*.praw"):
+                current |= {p.name for p in rec_dir.glob(ext)}
             new_names = current - before_files
             if new_names:
-                latest = max(new_names, key=lambda n: (rec_dir / n).stat().st_mtime)
-                new_file = str(rec_dir / latest)
-                break
+                for name in new_names:
+                    ext = Path(name).suffix.lower().lstrip(".")
+                    new_files[ext] = str(rec_dir / name)
+                if new_files:
+                    break
+
+    new_file = new_files.get("ply", "") or new_files.get("praw", "")
 
     return {
         "status": "complete",
         "file": new_file or "",
+        "praw_file": new_files.get("praw", ""),
+        "ply_file": new_files.get("ply", ""),
         "phoxi_recording_dir": str(rec_dir),
         "note": ("file detected" if new_file else
                  "trigger fired but no new file; ensure PhoXi Control "
-                 "Recording is ON with PLY format"),
+                 "Recording is ON with PLY/PRAW format"),
     }
 
 
@@ -228,15 +237,17 @@ def main() -> int:
     if "photoneo" in cameras:
         result = capture_photoneo(phoxi_dir)
         if result["status"] == "complete":
+            if result.get("ply_file"):
+                files["photoneo_ply"] = result["ply_file"]
+            if result.get("praw_file"):
+                files["photoneo_praw"] = result["praw_file"]
+
             if result.get("file"):
                 files["photoneo"] = result["file"]
             settings["photoneo"] = {
                 "phoxi_recording_dir": result.get("phoxi_recording_dir", ""),
                 "note": result.get("note", ""),
             }
-        else:
-            errors.append(f"photoneo: {result.get('error', 'unknown')}")
-
     if files and not errors:
         overall_status = "complete"
     elif files:
