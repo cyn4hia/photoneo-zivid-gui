@@ -29,3 +29,7 @@ uv pip uninstall zivid
 uv pip install zivid==2.16.0
 
 uv pip install open3d
+
+*test*
+mkdir C:\temp\photoneo_test 2>nul
+"C:\path\to\launcher\.venv\Scripts\python.exe" "C:\path\to\launcher\capture_worker_cli.py" "{\"cameras\":[\"photoneo\"],\"out_dir\":\"C:\\temp\\photoneo_test\",\"phoxi_dir\":\"C:\\Program Files\\Photoneo\\PhoXiControl\",\"zivid_settings\":null}"
