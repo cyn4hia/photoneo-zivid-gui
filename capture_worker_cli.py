@@ -40,40 +40,43 @@ def capture_zivid(out_dir: Path, settings_yaml: str | None) -> dict:
             return {"status": "failed", "error": "no Zivid cameras detected"}
         camera = app.connect_camera()
 
+        # Match the working pattern: bare Settings() works for capture_2d_3d
+        # in this Zivid version. Override with a YAML file if provided.
         if settings_yaml and Path(settings_yaml).exists():
             settings = zivid.Settings.load(settings_yaml)
         else:
-            settings = zivid.Settings(
-                acquisitions=[zivid.Settings.Acquisition()],
-                color=zivid.Settings2D(
-                    acquisitions=[zivid.Settings2D.Acquisition()],
-                ),
-            )
-            try:
-                settings.sampling.pixel = zivid.Settings.Sampling.Pixel.all
-            except Exception:
-                pass
+            settings = zivid.Settings()
 
         out_dir.mkdir(parents=True, exist_ok=True)
         ply_path = out_dir / "zivid.ply"
         zdf_path = out_dir / "zivid.zdf"
-        with camera.capture_3d(settings) as frame:
-            # Save the raw frame as ZDF first (preserves calibration + raw data)
-            try:
-                frame.save(str(zdf_path))
-            except Exception as e:
-                print(f"[zivid] zdf save failed: {e}", flush=True)
 
-            # Then save a PLY for downstream tools that don't read ZDF
-            point_cloud = frame.point_cloud()
-            saved = False
-            for method_name in ("save", "save_ply"):
-                if hasattr(point_cloud, method_name):
+        # capture_2d_3d returns a Frame (not a context manager in some versions)
+        frame = camera.capture_2d_3d(settings)
+
+        # ZDF first - preserves the full raw frame (calibration, intensity, etc.)
+        try:
+            frame.save(str(zdf_path))
+        except Exception as e:
+            print(f"[zivid] zdf save failed: {e}", flush=True)
+
+        # Then PLY for downstream tools that don't read ZDF
+        point_cloud = frame.point_cloud()
+        saved = False
+        for method_name in ("save", "save_ply"):
+            if hasattr(point_cloud, method_name):
+                try:
                     getattr(point_cloud, method_name)(str(ply_path))
                     saved = True
                     break
-            if not saved:
+                except Exception:
+                    continue
+        if not saved:
+            try:
                 frame.save(str(ply_path))
+                saved = True
+            except Exception as e:
+                print(f"[zivid] ply save failed: {e}", flush=True)
 
         ply_size = ply_path.stat().st_size if ply_path.exists() else 0
         zdf_size = zdf_path.stat().st_size if zdf_path.exists() else 0
@@ -85,7 +88,7 @@ def capture_zivid(out_dir: Path, settings_yaml: str | None) -> dict:
 
         return {
             "status": "complete",
-            "file": str(ply_path),     # primary file (PLY)
+            "file": str(ply_path),
             "zdf_file": str(zdf_path) if zdf_size > 0 else "",
             "size_bytes": ply_size,
             "zdf_size_bytes": zdf_size,
