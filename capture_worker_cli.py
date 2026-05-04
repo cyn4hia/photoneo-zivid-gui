@@ -110,7 +110,7 @@ def capture_zivid(out_dir: Path, settings_yaml: str | None) -> dict:
         }
 
 
-def capture_photoneo(phoxi_dir: Path) -> dict:
+def capture_photoneo(phoxi_dir: Path, out_dir: Path) -> dict:
     """Trigger Photoneo. PhoXi Control records the file; we identify it
     by snapshotting the recording folder before/after."""
     try:
@@ -171,7 +171,7 @@ def capture_photoneo(phoxi_dir: Path) -> dict:
             except Exception:
                 pass
 
-    new_files = {}
+    new_files: dict = {}   # extension -> path in PhoXi's flat folder
     for _ in range(60):
         time.sleep(0.1)
         if rec_dir.exists():
@@ -186,17 +186,47 @@ def capture_photoneo(phoxi_dir: Path) -> dict:
                 if new_files:
                     break
 
-    new_file = new_files.get("ply", "") or new_files.get("praw", "")
+    moved_files: dict = {}
+    move_errors: list = []
+    if new_files:
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            move_errors.append(f"could not create out_dir: {e}")
+
+        import shutil
+        for ext, src in new_files.items():
+            try:
+                src_path = Path(src)
+                dest = out_dir / f"photoneo.{ext}"
+                if dest.exists():
+                    dest.unlink()
+                shutil.move(str(src_path), str(dest))
+                moved_files[ext] = str(dest)
+            except Exception as e:
+                move_errors.append(f"{ext}: {e}")
+                moved_files[ext] = src
+
+    primary = moved_files.get("ply", "") or moved_files.get("praw", "")
+
+    note_parts = []
+    if not new_files:
+        note_parts.append(
+            "trigger fired but no new file; ensure PhoXi Control "
+            "Recording is ON with PLY/PRAW format"
+        )
+    else:
+        note_parts.append(f"detected {len(new_files)} new file(s)")
+    if move_errors:
+        note_parts.append("move errors: " + "; ".join(move_errors))
 
     return {
         "status": "complete",
-        "file": new_file or "",
-        "praw_file": new_files.get("praw", ""),
-        "ply_file": new_files.get("ply", ""),
+        "file": primary,
+        "praw_file": moved_files.get("praw", ""),
+        "ply_file": moved_files.get("ply", ""),
         "phoxi_recording_dir": str(rec_dir),
-        "note": ("file detected" if new_file else
-                 "trigger fired but no new file; ensure PhoXi Control "
-                 "Recording is ON with PLY/PRAW format"),
+        "note": " · ".join(note_parts),
     }
 
 
@@ -235,7 +265,7 @@ def main() -> int:
             errors.append(f"zivid: {result.get('error', 'unknown')}")
 
     if "photoneo" in cameras:
-        result = capture_photoneo(phoxi_dir)
+        result = capture_photoneo(phoxi_dir, out_dir)
         if result["status"] == "complete":
             if result.get("ply_file"):
                 files["photoneo_ply"] = result["ply_file"]
