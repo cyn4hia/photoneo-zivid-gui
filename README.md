@@ -25,3 +25,5 @@ python capture_3d.py
 pip uninstall zivid
 pip install zivid==2.16.0
 
+uv pip uninstall zivid
+uv pip install zivid==2.16.0

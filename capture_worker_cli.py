@@ -45,6 +45,9 @@ def capture_zivid(out_dir: Path, settings_yaml: str | None) -> dict:
         else:
             settings = zivid.Settings(
                 acquisitions=[zivid.Settings.Acquisition()],
+                color=zivid.Settings2D(
+                    acquisitions=[zivid.Settings2D.Acquisition()],
+                ),
             )
             try:
                 settings.sampling.pixel = zivid.Settings.Sampling.Pixel.all
@@ -53,7 +56,15 @@ def capture_zivid(out_dir: Path, settings_yaml: str | None) -> dict:
 
         out_dir.mkdir(parents=True, exist_ok=True)
         ply_path = out_dir / "zivid.ply"
-        with camera.capture_2d_3d(settings) as frame:
+        zdf_path = out_dir / "zivid.zdf"
+        with camera.capture_3d(settings) as frame:
+            # Save the raw frame as ZDF first (preserves calibration + raw data)
+            try:
+                frame.save(str(zdf_path))
+            except Exception as e:
+                print(f"[zivid] zdf save failed: {e}", flush=True)
+
+            # Then save a PLY for downstream tools that don't read ZDF
             point_cloud = frame.point_cloud()
             saved = False
             for method_name in ("save", "save_ply"):
@@ -64,7 +75,9 @@ def capture_zivid(out_dir: Path, settings_yaml: str | None) -> dict:
             if not saved:
                 frame.save(str(ply_path))
 
-        size = ply_path.stat().st_size if ply_path.exists() else 0
+        ply_size = ply_path.stat().st_size if ply_path.exists() else 0
+        zdf_size = zdf_path.stat().st_size if zdf_path.exists() else 0
+
         try:
             camera.disconnect()
         except Exception:
@@ -72,10 +85,13 @@ def capture_zivid(out_dir: Path, settings_yaml: str | None) -> dict:
 
         return {
             "status": "complete",
-            "file": str(ply_path),
-            "size_bytes": size,
+            "file": str(ply_path),     # primary file (PLY)
+            "zdf_file": str(zdf_path) if zdf_size > 0 else "",
+            "size_bytes": ply_size,
+            "zdf_size_bytes": zdf_size,
             "settings": {"yaml": settings_yaml or "default"},
         }
+
     except Exception as e:
         return {
             "status": "failed",
