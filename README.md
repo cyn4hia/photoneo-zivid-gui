@@ -21,3 +21,7 @@ cd C:\path\to\your\folder
 .venv\Scripts\activate
 python capture_3d.py
 
+*zivid version match, must match*
+pip uninstall zivid
+pip install zivid==2.16.0
+
